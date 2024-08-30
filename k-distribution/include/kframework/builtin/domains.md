@@ -2845,56 +2845,39 @@ width in bits of the integer. The `MInt` sort is parametric, and this is
 reflected in the literals. For example, the sort of `0p8` is `MInt{8}`.
 
 ```k
-module MINT-SYNTAX
+module MINT
+  imports INT
+  imports K-EQUAL
+  imports LIST
+
+  syntax MInt [hook(MINT.MInt)]
+
   /*@\section{Description} The MInt implements machine integers of arbitrary
    * bit width represented in 2's complement. */
-  syntax {Width} MInt{Width} [hook(MINT.MInt)]
 
   /*@ Machine integer of bit width and value. */
-  syntax {Width} MInt{Width} ::= r"[\\+\\-]?[0-9]+[pP][0-9]+" [token, prec(2), hook(MINT.literal)]
-endmodule
+  syntax MInt ::= mi(Int, Int)    [function, hook(MINT.constructor)]
 
-module MINT
-  imports MINT-SYNTAX
-  imports private INT
-  imports private BOOL
-```
+  /*@ Function returning the bit width of this machine integer. */
+  syntax Int ::= bitwidthMInt(MInt)   [function, functional, hook(MINT.bitwidth)]
 
-### Bitwidth of MInt
+  /*@
+   * Functions returning the signed and unsigned interpretations of this
+   * machine integers.
+   *   svalue  returns an integer between -2^(bitwidth - 1) and
+   *           2^(bitwidth - 1) - 1
+   *   uvalue  returns an integer between 0 and 2^bitwidth - 1
+   */
+  syntax Int ::= svalueMInt(MInt)     [function, functional, hook(MINT.svalue)]
+               | uvalueMInt(MInt)     [function, functional, hook(MINT.uvalue), smt-hook(bv2int)]
 
-You can get the number of bits of width in an MInt using `bitwidthMInt`.
+  /*@ Checks whether a machine integer is zero */
+  syntax Bool ::= zeroMInt(MInt)    [function, functional, hook(MINT.zero)]
 
-```k
-  syntax {Width} Int ::= bitwidthMInt(MInt{Width})   [function, total, hook(MINT.bitwidth)]
-```
-
-### Int and MInt conversions
-
-You can convert from an `MInt` to an `Int` using the `MInt2Signed` and
-`MInt2Unsigned` functions. an `MInt` does not have a sign; its sign is instead
-reflected in how operators interpret its value either as a signed integer or as
-an unsigned integer. Thus, you can interpret a `MInt` as a signed integer witth
-`MInt2Signed`, or as an unsigned integer respectively using `MInt2Unsigned`.
-
-You can also convert from an `Int` to an `MInt` using `Int2MInt`. Care must
-be given to ensure that the sort context where the `Int2MInt` operator appears
-has the correct bitwidth, as this will influence the width of the resulting
-`MInt`.
-
-```k
-  syntax {Width} Int ::= MInt2Signed(MInt{Width})     [function, total, hook(MINT.svalue)]
-                       | MInt2Unsigned(MInt{Width})     [function, total, hook(MINT.uvalue), smt-hook(bv2int)]
-
-  syntax {Width} MInt{Width} ::= Int2MInt(Int) [function, total, hook(MINT.integer), smt-hook(int2bv)]
-```
-
-### MInt min and max values
-
-You can get the minimum and maximum values of a signed or unsigned `MInt`
-with az specified bit width using `sminMInt`, `smaxMInt`, `uminMInt`, and
-`umaxMInt`.
-
-```k
+  /*@
+   * Functions for signed and unsigned minimum and maximum values of a machine
+   * integer on a given bit width.
+   */
   syntax Int ::= sminMInt(Int)    [function]
                | smaxMInt(Int)    [function]
                | uminMInt(Int)    [function]
@@ -2903,17 +2886,13 @@ with az specified bit width using `sminMInt`, `smaxMInt`, `uminMInt`, and
   rule smaxMInt(N:Int) => (1 <<Int (N -Int 1)) -Int 1
   rule uminMInt(_:Int) => 0
   rule umaxMInt(N:Int) => (1 <<Int N) -Int 1
-```
 
-### MInt bounds checking
-
-You can check whether a specified `Int` will be represented in an `MInt`
-with a specified `width` without any loss of precision when interpreted as
-a signed or unsigned integer using `soverflowMInt` and `uoverflowMInt`.
-
-```k
-  syntax Bool ::= soverflowMInt(width: Int, Int)   [function]
-                | uoverflowMInt(width: Int, Int)   [function]
+  /*@
+   * Functions checking whether a given integer can be represented on as signed
+   * or unsigned on a given bit width without overflow.
+   */
+  syntax Bool ::= soverflowMInt(Int, Int)   [function]
+                | uoverflowMInt(Int, Int)   [function]
   rule
     soverflowMInt(N:Int, I:Int)
   =>
@@ -2922,102 +2901,141 @@ a signed or unsigned integer using `soverflowMInt` and `uoverflowMInt`.
     uoverflowMInt(N:Int, I:Int)
   =>
     I <Int uminMInt(N) orBool I >Int umaxMInt(N)
-```
 
-### MInt arithmetic
+  /*@
+   * Projection functions for results of operations with overflow.
+   * miInt(saddMInt(...))         returns the result of the operation (ignoring
+   *                              overflow)
+   * overflowMInt(saddMInt(...))  returns true if overflow is detected during
+   *                              the execution of the operation
+   */
+  syntax MInt ::= miMInt(List)          [function]
+  rule miMInt(ListItem(MI:MInt) ListItem(_:Bool)) => MI
+  syntax Bool ::= overflowMInt(List)    [function]
+  rule overflowMInt(ListItem(_:MInt) ListItem(B:Bool)) => B
 
-You can:
+  /*@
+   * Arithmetic and comparison operations
+   *   op   does not interprets the operands as either signed or unsigned
+   *   sop  interprets the operands as signed
+   *   uop  interprets the operands as unsigned
+   */
+  /*@
+   * Addition, subtraction, and multiplication are the same for signed and
+   * unsigned integers represented in 2's complement
+   */
+  syntax MInt ::= addMInt(MInt, MInt)   [function, hook(MINT.add), smt-hook(bvadd)]
+                | subMInt(MInt, MInt)   [function, hook(MINT.sub), smt-hook(bvsub)]
+                | mulMInt(MInt, MInt)   [function, hook(MINT.mul), smt-hook(bvmul)]
 
-* Compute the bitwise complement `~MInt` of an `MInt`.
-* Compute the unary negation `--MInt` of an `MInt`.
-* Compute the product `*MInt` of two `MInt`s.
-* Compute the quotient `/sMInt` of two `MInt`s interpreted as signed integers.
-* Compute the modulus `%sMInt` of two `MInt`s interpreted as signed integers.
-* Compute the quotient `/uMInt` of two `MInt`s interpreted as unsigned
-  integers.
-* Compute the modulus `%uMInt` of two `MInt`s interpreted as unsigned integers.
-* Compute the sum `+MInt` of two `MInt`s.
-* Compute the difference `-MInt` of two `MInt`s.
-* Compute the left shift `<<MInt` of two `MInt`s. The second `MInt` is always
-  interpreted as positive.
-* Compute the arithmetic right shift `>>aMInt` of two `MInt`s. The second
-  `MInt` is always interpreted as positve.
-* Compute the logical right shift `>>lMInt` of two `MInt`s. The second `MInt`
-  is always interpreted as positive.
-* Compute the bitwise and `&MInt` of two `MInt`s.
-* Compute the bitwise xor `xorMInt` of two `MInt`s.
-* Compute the bitwise inclusive or `|MInt` of two `MInt`s.
+  /*@
+   * Division and reminder
+   * sdiv/srem  operation interprets operands as signed; undefined if the second
+   *            argument is 0; returns a pair of result and overflow flag
+   *            represented as a list of 2 elements (overflow happens when the
+   *            first operand is the minimum value and the second operand is -1)
+   * udiv/urem  operation interprets operands as unsigned; undefined if the
+   *            second argument is 0
+   */
+  syntax List ::= sdivMInt(MInt, MInt)    [function, hook(MINT.sdiv)]
+                | sremMInt(MInt, MInt)    [function, hook(MINT.srem)]
+  syntax MInt ::= udivMInt(MInt, MInt)    [function, hook(MINT.udiv), smt-hook(bvudiv)]
+                | uremMInt(MInt, MInt)    [function, hook(MINT.urem), smt-hook(bvurem)]
 
-```k
-  syntax {Width} MInt{Width} ::= "~MInt" MInt{Width} [function, total, hook(MINT.not), smt-hook(bvnot)]
-                               | "--MInt" MInt{Width} [function, total, hook(MINT.neg), smt-hook(bvuminus)]
-                               > left:
-                                 MInt{Width} "*MInt" MInt{Width} [function, total, hook(MINT.mul), smt-hook(bvmul)]
-                               | MInt{Width} "/sMInt" MInt{Width} [function, hook(MINT.sdiv), smt-hook(bvsdiv)]
-                               | MInt{Width} "%sMInt" MInt{Width} [function, hook(MINT.srem), smt-hook(bvsrem)]
-                               | MInt{Width} "/uMInt" MInt{Width} [function, hook(MINT.udiv), smt-hook(bvudiv)]
-                               | MInt{Width} "%uMInt" MInt{Width} [function, hook(MINT.urem), smt-hook(bvurem)]
-                               > left:
-                                 MInt{Width} "+MInt" MInt{Width} [function, total, hook(MINT.add), smt-hook(bvadd)]
-                               | MInt{Width} "-MInt" MInt{Width} [function, total, hook(MINT.sub), smt-hook(bvsub)]
-                               > left:
-                                 MInt{Width} "<<MInt" MInt{Width} [function, hook(MINT.shl), smt-hook(bvshl)]
-                               | MInt{Width} ">>aMInt" MInt{Width} [function, hook(MINT.ashr), smt-hook(bvashr)]
-                               | MInt{Width} ">>lMInt" MInt{Width} [function, hook(MINT.lshr), smt-hook(bvlshr)]
-                               > left:
-                                 MInt{Width} "&MInt" MInt{Width} [function, total, hook(MINT.and), smt-hook(bvand)]
-                               > left:
-                                 MInt{Width} "xorMInt" MInt{Width} [function, total, hook(MINT.xor), smt-hook(bvxor)]
-                               > left:
-                                 MInt{Width} "|MInt" MInt{Width} [function, total, hook(MINT.or), smt-hook(bvor)]
-```
+  /*@
+   * Addition, subtraction and multiplication with overflow detection; each
+   * operation returns a pair of result and overflow flag represented as a list
+   * of 2 elements
+   */
+  syntax List ::= saddMInt(MInt, MInt)    [function, hook(MINT.sadd)]
+                | uaddMInt(MInt, MInt)    [function, hook(MINT.uadd)]
+                | ssubMInt(MInt, MInt)    [function, hook(MINT.ssub)]
+                | usubMInt(MInt, MInt)    [function, hook(MINT.usub)]
+                | smulMInt(MInt, MInt)    [function, hook(MINT.smul)]
+                | umulMInt(MInt, MInt)    [function, hook(MINT.umul)]
 
-### MInt comparison
+  /*@
+   * Shift operations; the second operand must be non-negative
+   *
+   * ashrMInt   arithmetic shift: filling with leftmost bit (sign extension)
+   * lshrMInt   logical shift: filling with zeros
+   */
+  syntax MInt ::= shlMInt(MInt, Int)    [function, hook(MINT.shl), smt-hook(bvshl)]
+                | ashrMInt(MInt, Int)   [function, hook(MINT.ashr)]
+                | lshrMInt(MInt, Int)   [function, hook(MINT.lshr), smt-hook(bvlshr)]
 
-You can compute whether one `MInt` is less than, less than or equal to, greater
-than, or greater than or equal to another `MInt` when interpreted as signed
-or unsigned integers. You can also compute whether one `MInt` is equal to or
-unequal to another `MInt`.
+  /*@ Bitwise operations */
+  syntax MInt ::= andMInt(MInt, MInt)   [function, hook(MINT.and), smt-hook(bvand)]
+                | orMInt(MInt, MInt)    [function, hook(MINT.or), smt-hook(bvor)]
+                | xorMInt(MInt, MInt)   [function, hook(MINT.xor), smt-hook(bvxor)]
 
-```k
-  syntax {Width} Bool ::= MInt{Width} "<sMInt" MInt{Width} [function, total, hook(MINT.slt), smt-hook(bvslt)]
-                        | MInt{Width} "<uMInt" MInt{Width} [function, total, hook(MINT.ult), smt-hook(bvult)]
-                        | MInt{Width} "<=sMInt" MInt{Width} [function, total, hook(MINT.sle), smt-hook(bvsle)]
-                        | MInt{Width} "<=uMInt" MInt{Width} [function, total, hook(MINT.ule), smt-hook(bvule)]
-                        | MInt{Width} ">sMInt" MInt{Width} [function, total, hook(MINT.sgt), smt-hook(bvsgt)]
-                        | MInt{Width} ">uMInt" MInt{Width} [function, total, hook(MINT.ugt), smt-hook(bvugt)]
-                        | MInt{Width} ">=sMInt" MInt{Width} [function, total, hook(MINT.sge), smt-hook(bvsge)]
-                        | MInt{Width} ">=uMInt" MInt{Width} [function, total, hook(MINT.uge), smt-hook(bvuge)]
-                        | MInt{Width} "==MInt" MInt{Width} [function, total, hook(MINT.eq), smt-hook(=)]
-                        | MInt{Width} "=/=MInt" MInt{Width} [function, total, hook(MINT.ne), smt-hook(distinct)]
-```
+  syntax MInt ::= negMInt(MInt)   [function, functional]
+  rule negMInt(MI:MInt) => xorMInt(MI, mi(bitwidthMInt(MI), -1))
 
-### MInt min/max
+  /*@ Comparison operations */
+  syntax Bool ::= sltMInt(MInt, MInt)   [function, hook(MINT.slt), smt-hook(bvslt)]
+                | ultMInt(MInt, MInt)   [function, hook(MINT.ult), smt-hook(bvult)]
+                | sleMInt(MInt, MInt)   [function, hook(MINT.sle), smt-hook(bvsle)]
+                | uleMInt(MInt, MInt)   [function, hook(MINT.ule), smt-hook(bvule)]
+                | sgtMInt(MInt, MInt)   [function, hook(MINT.sgt), smt-hook(bvsgt)]
+                | ugtMInt(MInt, MInt)   [function, hook(MINT.ugt), smt-hook(bvugt)]
+                | sgeMInt(MInt, MInt)   [function, hook(MINT.sge), smt-hook(bvsge)]
+                | ugeMInt(MInt, MInt)   [function, hook(MINT.uge), smt-hook(bvuge)]
+                | eqMInt(MInt, MInt)    [function, hook(MINT.eq), smt-hook(=)]
+                | neMInt(MInt, MInt)    [function, hook(MINT.ne), smt-hook(distinct)]
 
-You can compute the signed minimum `sMinMInt`, the signed maximum `sMaxMInt`,
-the unsigned minimum `uMinMInt`, and the unsigned maximum `uMaxMInt` of two
-`MInt`s.
+  syntax MInt ::= sMaxMInt(MInt, MInt) [function, smt-hook((ite (bvslt #1 #2) #2 #1))]
+                | sMinMInt(MInt, MInt) [function, smt-hook((ite (bvslt #1 #2) #1 #2))]
 
-```k
-  syntax {Width} MInt{Width} ::= sMaxMInt(MInt{Width}, MInt{Width}) [function, total, hook(MINT.smax), smt-hook((ite (bvslt #1 #2) #2 #1))]
-                               | sMinMInt(MInt{Width}, MInt{Width}) [function, total, hook(MINT.smin), smt-hook((ite (bvslt #1 #2) #1 #2))]
-                               | uMaxMInt(MInt{Width}, MInt{Width}) [function, total, hook(MINT.umax), smt-hook((ite (bvult #1 #2) #2 #1))]
-                               | uMinMInt(MInt{Width}, MInt{Width}) [function, total, hook(MINT.umin), smt-hook((ite (bvult #1 #2) #1 #2))]
-```
+  /*@
+   * Returns a machine integer with the underlying bits; the bits of the first
+   * machine integer concatenated with the bits of the second machine integer.
+   * The bits of the first machine integer are on the more significant
+   * positions. The resulting bit width is the sum of two inputs' bit widths.
+   */
+  syntax MInt ::= concatenateMInt(MInt, MInt)   [function, hook(MINT.concatenate), smtlib((concat #2 #1))]
 
-### MInt to MInt conversion
+  /*@
+   * Returns a machine integer with the underlying bits of the given
+   * machine integer in the given range. The bit on position 0 is the most
+   * significant bit.
+   */
+  syntax MInt ::= extractMInt(MInt, Int, Int)   [function, hook(MINT.extract), smt-hook(extract)]
 
-You can convert an `MInt` of one width to another width with `roundMInt`.
-The resulting `MInt` will be truncated starting from the most significant bit
-if the resulting width is smaller than the input. The resulting `MInt` will be
-zero-extended with the same low-order bits if the resulting width is larger
-than the input.
+  /*@
+   * digitsOfMInt(mInt, digitBitWidth, count)
+   *
+   * Returns a list of the first digits representing the given machine integer,
+   * each digit a machine integer on the given bitwidth. Useful for serializing
+   * a integer to a sequence of bytes.
+   */
+  syntax List ::= digitsOfMInt(MInt, Int, Int)   [function, hook(MINT.toDigits)]
 
-```k
-  syntax {Width1, Width2} MInt{Width1} ::= roundMInt(MInt{Width2}) [function, total, hook(MINT.round)]
-  syntax {Width1, Width2} MInt{Width1} ::= signExtendMInt(MInt{Width2}) [function, total, hook(MINT.sext)]
-```
+  /*@
+   * Returns a machine integer representing the given list of digits. Each digit
+   * is represented as a machine integers. The list must be non-empty. Useful
+   * for deserializing an integer from a sequence of bytes.
+   */
+  syntax MInt ::= mIntOfDigits(List)   [function, hook(MINT.fromDigits)]
 
-```k
+  // TODO(AndreiS): change
+  rule zeroMInt(MI:MInt) => eqMInt(MI, xorMInt(MI, MI))
+
+  /*@
+   * Conversion to and from a list of digits
+   */
+  rule
+    digitsOfMInt(MI:MInt, N:Int, M:Int)
+  =>
+    digitsOfMInt(MI, N, M -Int 1)
+    ListItem(extractMInt(MI, N *Int (M -Int 1), N *Int M))
+  when M >Int 0
+  rule digitsOfMInt(_:MInt, _:Int, 0) => .List
+
+  rule
+    mIntOfDigits(ListItem(MI1:MInt) ListItem(MI2:MInt) L:List)
+  =>
+    concatenateMInt(MI1, mIntOfDigits(ListItem(MI2) L))
+  rule mIntOfDigits(ListItem(MI:MInt)) => MI
 endmodule
 ```
